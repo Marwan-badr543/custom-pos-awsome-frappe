@@ -1,3 +1,5 @@
+> **Fork notice:** this is a modified version of [POS Awesome V15](https://github.com/defendicon/POS-Awesome-V15) by defendicon, licensed under the GNU GPL v3 (see [LICENSE.md](LICENSE.md)). Changes: integration with the `delivery_management` app (delivery dialog, delivery store, stock-aware item qty).
+
 <div align="center">
     <img src="https://frappecloud.com/files/pos.png" height="128">
     <h2>POS AWESOME</h2>
