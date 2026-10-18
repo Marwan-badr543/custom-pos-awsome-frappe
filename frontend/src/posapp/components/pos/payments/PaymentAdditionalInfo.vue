@@ -3,7 +3,10 @@
 		<!-- Additional Invoice Information (Delivery, Address, Notes) -->
 		<v-row class="pa-1">
 			<!-- Delivery Date and Address (if applicable) -->
-			<v-col cols="6" v-if="posProfile.posa_allow_sales_order && invoiceType === 'Order'">
+			<v-col
+				cols="6"
+				v-if="!dmOrders && posProfile.posa_allow_sales_order && invoiceType === 'Order'"
+			>
 				<VueDatePicker
 					:model-value="newDeliveryDate"
 					model-type="format"
@@ -28,7 +31,7 @@
 				/>
 			</v-col>
 			<!-- Shipping Address Selection (if delivery date is set) -->
-			<v-col cols="12" v-if="invoiceDoc.posa_delivery_date">
+			<v-col cols="12" v-if="!dmOrders && invoiceDoc.posa_delivery_date">
 				<v-autocomplete
 					density="compact"
 					clearable
@@ -115,9 +118,10 @@
 </template>
 
 <script setup>
-import { inject } from "vue";
+import { computed, inject } from "vue";
+import { dmOrdersEnabled } from "../../../utils/deliveryManagement";
 
-defineProps({
+const props = defineProps({
 	invoiceDoc: {
 		type: Object,
 		required: true,
@@ -158,6 +162,8 @@ defineProps({
 
 defineEmits(["update:newDeliveryDate", "update:returnValidUptoDate", "new-address"]);
 
+// delivery_management: the delivery address and slot are chosen in the cart.
+const dmOrders = computed(() => dmOrdersEnabled(props.posProfile));
 const $frappe = inject("frappe", window.frappe);
 const $__ = inject("__", window.__);
 </script>

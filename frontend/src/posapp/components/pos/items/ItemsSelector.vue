@@ -217,6 +217,18 @@
 								@toggle-selection="toggleItemSelection"
 								@select-all="handleSelectAll"
 							/>
+							<div v-if="itemsPageCount > 1" class="dm-items-pager">
+								<v-pagination
+									v-model="itemsPage"
+									:length="itemsPageCount"
+									:total-visible="5"
+									density="compact"
+									rounded="circle"
+								/>
+								<span class="dm-items-pager__count">
+									{{ __("{0} items", [allMatchingItems.length]) }}
+								</span>
+							</div>
 						</v-col>
 					</v-row>
 				</v-card>
@@ -342,6 +354,9 @@ import { useCustomersStore } from "../../../stores/customersStore";
 import { useToastStore } from "../../../stores/toastStore";
 import { useUIStore } from "../../../stores/uiStore";
 import { useInvoiceStore } from "../../../stores/invoiceStore";
+import { useDeliveryStore } from "../../../stores/deliveryStore";
+import { useDeliveryStock } from "../../../composables/pos/delivery/useDeliveryStock";
+import { useDeliveryRules } from "../../../composables/pos/delivery/useDeliveryRules";
 import { useEmployeeStore } from "../../../stores/employeeStore";
 
 import { parseBooleanSetting, shouldBlockSaleForStock } from "../../../utils/stock";
@@ -570,7 +585,13 @@ const {
 	syncedItemsCount = ref(0),
 } = itemsIntegration;
 
-const displayedItems = computed(() => {
+// delivery_management: page through the whole filtered list (stock POS Awesome showed
+// only the first page and nothing after it unless the cashier searched).
+const itemsPage = ref(1);
+const pageSizeValue = computed(() =>
+	Math.max(1, Number(enable_custom_items_per_page.value ? items_per_page.value : itemsPerPage.value) || 50),
+);
+const allMatchingItems = computed(() => {
 	const baseItems = Array.isArray(filteredItems.value) ? filteredItems.value : [];
 	const rawTerm = first_search.value;
 	const term = (typeof rawTerm === "string" ? rawTerm : "").trim().toLowerCase();
@@ -581,8 +602,18 @@ const displayedItems = computed(() => {
 		hideZeroRate: hide_zero_rate_items.value,
 		hideVariants: pos_profile.value?.posa_hide_variants_items,
 		onlyBarcode: showOnlyBarcodeItemsRef.value,
-		limit: enable_custom_items_per_page.value ? items_per_page.value : itemsPerPage.value,
+		limit: Number.MAX_SAFE_INTEGER,
 	});
+});
+const itemsPageCount = computed(() => Math.max(1, Math.ceil(allMatchingItems.value.length / pageSizeValue.value)));
+const displayedItems = computed(() => {
+	const page = Math.min(itemsPage.value, itemsPageCount.value);
+	const start = (page - 1) * pageSizeValue.value;
+	return allMatchingItems.value.slice(start, start + pageSizeValue.value);
+});
+// A new search, group or page size starts again at page 1.
+watch([first_search, item_group, pageSizeValue], () => {
+	itemsPage.value = 1;
 });
 
 // Item reloads (notably after a customer/price-list change) replace the
@@ -595,6 +626,95 @@ watch(
 		itemAvailability.primeStockState("items-refresh");
 	},
 	{ flush: "post" },
+);
+
+// delivery_management: load the sellable stock (branch + main store) of what is shown.
+const deliveryStore = useDeliveryStore();
+const deliveryStock = useDeliveryStock();
+const deliveryRules = useDeliveryRules();
+/** Delivery charge rows this screen added by itself (removed again if the sale becomes an Invoice). */
+const autoChargeRows = new Set<string>();
+let addingCharge = false;
+
+/** An item with "Has Delivery Charge" is in the Order: add the Delivery Charge Item once. */
+async function addDeliveryChargeIfNeeded() {
+	if (addingCharge || isReturnInvoice.value) return;
+	if (!deliveryRules.active(invoiceStore.invoiceType, pos_profile.value, invoiceStore.invoiceDoc)) return;
+	addingCharge = true;
+	try {
+		const cart = invoiceStore.items;
+		await deliveryRules.store.ensureRules(cart.map((r: any) => r.item_code), pos_profile.value?.name);
+		if (!deliveryRules.needsDeliveryCharge(invoiceStore.items)) return;
+		const code = deliveryRules.store.deliveryChargeItem;
+		let chargeItem: any = (items.value || []).find((i: any) => i.item_code === code);
+		if (!chargeItem) {
+			const res: any = await frappe.call({
+				method: "posawesome.posawesome.api.items.get_items",
+				args: {
+					pos_profile: pos_profile.value,
+					price_list: itemsIntegration.active_price_list.value,
+					search_value: code,
+				},
+			});
+			chargeItem = (res?.message || []).find((i: any) => i.item_code === code);
+		}
+		if (!chargeItem) {
+			toastStore.show({
+				title: __("Delivery charge item {0} is not available in this POS Profile", [code]),
+				detail: __("Add its item group to the POS Profile and give it a price."),
+				color: "error",
+			});
+			return;
+		}
+		const line = await add_item(chargeItem, { qty: 1, new_line: true, dmDeliveryCharge: true });
+		if (line) {
+			toastStore.show({
+				title: __("Delivery charge added"),
+				detail: chargeItem.item_name || code,
+				color: "info",
+			});
+		}
+	} catch (error) {
+		console.warn("delivery_management: delivery charge not added", error);
+	} finally {
+		addingCharge = false;
+	}
+}
+
+// Invoice -> Order: add the charge if needed.
+// Order -> Invoice (branch pickup, no delivery): take back the charge this screen added.
+watch(
+	() => invoiceStore.invoiceType,
+	async (type, previous) => {
+		if (!deliveryStock.enabled || type === previous) return;
+		// Fresh qty for the new type's store: branch for Invoice, main store for Order.
+		void deliveryStore.stockChanged(
+			invoiceStore.items.map((r: any) => r.item_code),
+			pos_profile.value?.name,
+		);
+		if (deliveryRules.active(type, pos_profile.value, invoiceStore.invoiceDoc)) {
+			await deliveryRules.store.ensureRules(
+				invoiceStore.items.map((r: any) => r.item_code),
+				pos_profile.value?.name,
+			);
+			void addDeliveryChargeIfNeeded();
+		} else {
+			for (const row of invoiceStore.items.filter((r: any) => autoChargeRows.has(r.posa_row_id))) {
+				invoiceStore.removeItemByRowId(row.posa_row_id);
+				autoChargeRows.delete(row.posa_row_id);
+			}
+		}
+	},
+);
+watch(
+	[displayedItems, () => pos_profile.value?.name],
+	([list, profileName]) => {
+		if (!deliveryStock.enabled || !profileName) return;
+		const codes = (list || []).map((item: any) => item?.item_code).filter(Boolean);
+		deliveryStore.setVisibleCodes(codes);
+		deliveryStore.loadAvailability(codes, profileName);
+	},
+	{ immediate: true },
 );
 
 const pharmacySearchField = ref("all");
@@ -951,6 +1071,45 @@ const add_item = async (item, optionsOrQty: any = {}) => {
 			requestedQty === "" || requestedQty == null ? 1 : Math.abs(parseFloat(requestedQty) || 1);
 
 		item = { ...item };
+		if (deliveryStock.dmOut(item)) {
+			toastStore.show({
+				title: __("{0} is out of stock in {1}", [
+					item.item_name || item.item_code,
+					deliveryStock.stockPlace.value,
+				]),
+				detail:
+					deliveryStock.type.value === "Order"
+						? __("Orders are delivered from the main store.")
+						: __("Switch the Type to Order to deliver it from the main store."),
+				color: "error",
+			});
+			return null;
+		}
+		const dmRemaining = deliveryStock.dmRemaining(item.item_code, invoiceStore.items);
+		const dmWanted = requestedQty * Number(item.conversion_factor || 1);
+		if (!item.has_variants && dmRemaining !== undefined && dmWanted > dmRemaining) {
+			toastStore.show({
+				title: __("Not enough stock of {0}", [item.item_name || item.item_code]),
+				detail: __("Only {0} left in {1} after what is already in the cart.", [
+					Math.max(0, dmRemaining),
+					deliveryStock.stockPlace.value,
+				]),
+				color: "error",
+			});
+			return null;
+		}
+		const dmRulesActive = deliveryRules.active(
+			invoiceStore.invoiceType,
+			pos_profile.value,
+			invoiceStore.invoiceDoc,
+		);
+		if (dmRulesActive && !isReturnInvoice.value) {
+			const reason = await deliveryRules.blockReason(item, invoiceStore.items, pos_profile.value);
+			if (reason) {
+				toastStore.show({ title: reason, color: "error" });
+				return null;
+			}
+		}
 		if (parseBooleanSetting(item.retailmind_locked_for_sale)) {
 			toastStore.show({
 				title: __("Item is locked for sale"),
@@ -1025,6 +1184,12 @@ const add_item = async (item, optionsOrQty: any = {}) => {
 				eventBus.emit("apply_pricing_rules");
 			}
 			qty.value = 1;
+			const addedRowId = (addedLine as any)?.posa_row_id;
+			if (addedLine && options.dmDeliveryCharge && addedRowId) {
+				autoChargeRows.add(addedRowId);
+			} else if (addedLine) {
+				void addDeliveryChargeIfNeeded();
+			}
 			if (
 				addedLine &&
 				props.presentation === "counter-grid-dialog" &&
@@ -2082,6 +2247,20 @@ defineExpose({
 	padding: var(--dynamic-xs);
 	overflow: hidden;
 	min-width: 0;
+}
+
+.dm-items-pager {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	padding: 6px 0 2px;
+}
+
+.dm-items-pager__count {
+	font-size: 0.8rem;
+	color: rgba(var(--v-theme-on-surface), 0.6);
 }
 
 .dynamic-scroll {

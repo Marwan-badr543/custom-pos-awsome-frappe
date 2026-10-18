@@ -277,7 +277,10 @@
 				</div>
 
 				<!-- Serial Number Section -->
-				<div class="posa-form-section" v-if="item.has_serial_no || item.serial_no">
+				<div
+					class="posa-form-section"
+					v-if="(item.has_serial_no || item.serial_no) && !serialsPickedByServer(invoice_doc, item)"
+				>
 					<div class="posa-section-header">
 						<v-icon size="small" class="section-icon">mdi-barcode-scan</v-icon>
 						<span class="posa-section-title">{{ __("Serial Numbers") }}</span>
@@ -392,10 +395,11 @@
 					</div>
 				</div>
 
-				<!-- Delivery Date Section -->
+				<!-- Delivery Date Section (delivery_management books the slot for the whole order) -->
 				<div
 					class="posa-form-section"
 					v-if="
+						!dmOrdersEnabled(pos_profile) &&
 						pos_profile.posa_allow_sales_order &&
 						['Order', 'Quotation'].includes(invoiceType || '')
 					"
@@ -432,6 +436,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { getDisplayableBatchOptions } from "../../../composables/pos/shared/useBatchSerial";
+import { dmOrdersEnabled, serialsPickedByServer } from "../../../utils/deliveryManagement";
 import type { CartItem, POSProfile, InvoiceDoc } from "../../../types/models";
 
 interface Props {

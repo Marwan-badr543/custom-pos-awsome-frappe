@@ -1,7 +1,7 @@
 <template>
 	<div class="selection-fields">
-		<!-- Sales Person Selection -->
-		<v-row class="pb-0 mb-2" align="start">
+		<!-- Sales Person Selection (delivery_management: the salesman is the cashier, set on the server) -->
+		<v-row v-if="!dmEnabled" class="pb-0 mb-2" align="start">
 			<v-col cols="12">
 				<p v-if="salesPersons && salesPersons.length > 0" class="mt-1 mb-1 text-subtitle-2">
 					{{ salesPersons.length }} {{ $__("sales persons found") }}
@@ -48,6 +48,9 @@
 
 <script setup>
 import { inject } from "vue";
+import { isDeliveryManagementEnabled } from "../../../utils/deliveryManagement";
+
+const dmEnabled = isDeliveryManagementEnabled();
 
 defineProps({
 	salesPersons: {

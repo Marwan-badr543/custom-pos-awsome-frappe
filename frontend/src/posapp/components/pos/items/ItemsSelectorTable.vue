@@ -112,8 +112,13 @@
 				</div>
 			</template>
 			<template v-slot:item.actual_qty="{ item }">
-				<span class="golden--text" :class="{ 'negative-number': isNegative(item.actual_qty) }">
-					{{ formatActualQty(item.actual_qty) }}
+				<span v-if="dmOut(item)" class="text-error font-weight-medium">{{ __("Out of stock") }}</span>
+				<span
+					v-else
+					class="golden--text"
+					:class="{ 'negative-number': isNegative(dmQty(item) ?? item.actual_qty) }"
+				>
+					{{ formatActualQty(dmQty(item) ?? item.actual_qty) }}
 				</span>
 			</template>
 		</v-data-table-virtual>
@@ -124,6 +129,9 @@
 import { ref, computed, nextTick, watch } from "vue";
 import ItemRateInfoMenu from "./ItemRateInfoMenu.vue";
 import { priceListToSelectedCurrency } from "../../../utils/erpnextCurrency";
+import { useDeliveryStock } from "../../../composables/pos/delivery/useDeliveryStock";
+
+const { dmQty, dmOut } = useDeliveryStock();
 
 const props = defineProps({
 	displayedItems: { type: Array, default: () => [] },

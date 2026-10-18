@@ -298,6 +298,18 @@
 		</v-card>
 
 		<div :class="['payment-footer', { 'payment-footer--dialog': dialogMode }]">
+			<!-- delivery_management: why Submit is locked for a delivery Order -->
+			<v-alert
+				v-if="deliveryBlockMessage"
+				type="warning"
+				variant="tonal"
+				density="compact"
+				class="mb-2"
+				icon="mdi-truck-alert-outline"
+				data-testid="dm-payment-delivery-alert"
+			>
+				{{ deliveryBlockMessage }}
+			</v-alert>
 			<PaymentActionButtons
 				ref="submitButton"
 				:loading="loading"
@@ -415,6 +427,8 @@ import PaymentCustomerCreditDetails from "./payments/PaymentCustomerCreditDetail
 import PaymentOptions from "./payments/PaymentOptions.vue";
 import PaymentSelectionFields from "./payments/PaymentSelectionFields.vue";
 import PaymentDialogs from "./payments/PaymentDialogs.vue";
+import { useDeliveryStore } from "../../stores/deliveryStore";
+import { defaultInvoiceType, isDmOrder } from "../../utils/deliveryManagement";
 
 const props = defineProps({
 	dialogMode: {
@@ -616,10 +630,26 @@ const netInvoiceSettlementAmount = computed(() => {
 	return invoice_doc.value?.is_return ? Math.min(net, 0) : Math.max(net, 0);
 });
 
+// delivery_management: a delivery Order needs its address and schedule (chosen in the cart).
+const deliveryStore = useDeliveryStore();
+const deliveryBlockMessage = computed(() => {
+	if (!isDmOrder(invoiceType.value, pos_profile.value, invoice_doc.value)) return "";
+	if (deliveryStore.delivery?.valid) return "";
+	const missing = deliveryStore.delivery?.missing || [];
+	return missing.length
+		? __("Close this and finish the Home Delivery details under the items. Still needed: {0}", [
+				missing.join(", "),
+			])
+		: __("Close this and finish the Home Delivery details under the items.");
+});
+
 const validatePayment = computed(() => {
 	const profile = pos_profile.value;
 	if (!profile || !profile.posa_allow_sales_order) {
 		return false;
+	}
+	if (isDmOrder(invoiceType.value, profile, invoice_doc.value)) {
+		return Boolean(deliveryBlockMessage.value);
 	}
 	if (invoiceType.value !== "Order") {
 		return false;
@@ -1299,8 +1329,10 @@ const finishSubmissionNavigation = (clearInvoice = false) => {
 			eventBus.emit("clear_invoice", { resetCurrency: true });
 		}
 
-		if (submittedType !== "Invoice") {
-			invoiceType.value = "Invoice";
+		// delivery_management: the next sale starts as an Order again.
+		const nextType = defaultInvoiceType(pos_profile.value);
+		if (submittedType !== nextType) {
+			invoiceType.value = nextType;
 			if (eventBus && typeof eventBus.emit === "function") {
 				eventBus.emit("reset_invoice_type_to_invoice");
 			}

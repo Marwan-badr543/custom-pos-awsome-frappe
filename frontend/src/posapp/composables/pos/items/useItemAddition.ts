@@ -17,6 +17,11 @@ import { collectUsedSerialsForItem } from "./addition/serialSelection";
 import { useBatchSerial } from "../shared/useBatchSerial";
 import { getRequiredStockQuantity } from "../shared/batchSerialValidation";
 import {
+	defaultInvoiceType,
+	dmOrdersEnabled,
+	serialsPickedByServer,
+} from "../../../utils/deliveryManagement";
+import {
 	allocateBatchStockQty,
 	getItemConversionFactor,
 } from "../shared/batchAllocation";
@@ -132,6 +137,12 @@ export function useItemAddition() {
 
 	const autoAssignSerials = (item: any, context: any) => {
 		if (!item?.has_serial_no) return;
+		// delivery_management picks the serials on the server (branch or main store).
+		if (
+			context?.invoiceType !== "Return" &&
+			serialsPickedByServer(context?.invoice_doc, item)
+		)
+			return;
 		if (item._batch_serial_assignment_source === "manual") {
 			callSetSerialNo(context, item);
 			return;
@@ -1060,11 +1071,9 @@ export function useItemAddition() {
 
 		context.eventBus.emit("set_customer_readonly", false);
 		context.invoiceType =
-			wasReturn || wasQuotation
+			(wasReturn || wasQuotation) && !dmOrdersEnabled(context.pos_profile)
 				? "Invoice"
-				: context.pos_profile.posa_default_sales_order
-					? "Order"
-					: "Invoice";
+				: defaultInvoiceType(context.pos_profile);
 		context.invoiceTypes = ["Invoice", "Order", "Quotation"];
 
 		if (Object.prototype.hasOwnProperty.call(context, "itemSearch")) {

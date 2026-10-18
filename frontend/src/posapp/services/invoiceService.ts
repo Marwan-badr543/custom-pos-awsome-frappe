@@ -2,6 +2,12 @@ import api from "./api";
 import { unwrapApiResult, type ApiEnvelope } from "./api";
 import type { InvoiceDoc, POSProfile } from "../types/models";
 import { resolvePosDocumentDoctype } from "../utils/posDocumentMode";
+import {
+	DM_API,
+	dmOrderType,
+	isDeliveryManagementEnabled,
+} from "../utils/deliveryManagement";
+import { useDeliveryStore } from "../stores/deliveryStore";
 
 function getSubmitInvoiceCall(
 	data: any,
@@ -13,6 +19,27 @@ function getSubmitInvoiceCall(
 		invoiceType,
 		posProfile,
 	});
+	if (
+		isDeliveryManagementEnabled() &&
+		(doctype === "Sales Invoice" || doctype === "POS Invoice") &&
+		invoiceDoc &&
+		typeof invoiceDoc === "object"
+	) {
+		// delivery_management picks serials, books the slot / AC day and, for Orders,
+		// creates the Sales Order, then submits through POS Awesome's own submit_invoice
+		// (always synchronously).
+		const orderType = dmOrderType(invoiceType, posProfile, invoiceDoc);
+		return {
+			method: `${DM_API}.submit`,
+			args: {
+				data,
+				invoice: invoiceDoc,
+				order_type: orderType,
+				delivery: orderType === "Order" ? useDeliveryStore().delivery : {},
+			},
+		};
+	}
+
 	const method =
 		doctype === "Sales Order"
 			? "posawesome.posawesome.api.sales_orders.submit_sales_order"
@@ -78,7 +105,9 @@ const invoiceService = {
 			invoiceType,
 			posProfile,
 		);
-		return api.callEnvelope(method, args);
+		// A delivery Order creates several documents in one request: allow it more time.
+		const options = method.startsWith(DM_API) ? { timeoutMs: 120_000 } : undefined;
+		return api.callEnvelope(method, args, options);
 	},
 
 	async submitInvoiceData(

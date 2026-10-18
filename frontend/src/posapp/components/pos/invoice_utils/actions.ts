@@ -4,6 +4,14 @@ import { _logPriceListDebug, _buildPriceListSnapshot } from "./currency";
 import { applyReturnDiscountProration } from "./item_updates";
 import { prepareDocumentFlowAction } from "../../../utils/documentSources";
 import { shouldFocusCartQtyAfterItemAdd } from "../../../utils/cartFocusSettings";
+import { isOffline } from "../../../../offline/index";
+import { ensureInvoiceClientRequestId } from "../../../../offline/idempotency";
+import {
+	defaultInvoiceType,
+	dmCall,
+	isDmOrder,
+} from "../../../utils/deliveryManagement";
+import { useDeliveryStore } from "../../../stores/deliveryStore";
 
 declare const __: (_text: string, _args?: any[]) => string;
 declare const frappe: any;
@@ -192,6 +200,12 @@ export async function cancel_invoice(context: any) {
 }
 
 export async function save_and_clear_invoice(context: any) {
+	if (
+		isDmOrder(context.invoiceType, context.pos_profile, context.invoice_doc) &&
+		context.items?.length
+	) {
+		return save_delivery_order_unpaid(context);
+	}
 	const { clearInvoice } = getItemAdditionApi();
 	let old_invoice = null;
 	const doc = get_invoice_doc(context);
@@ -225,6 +239,78 @@ export async function save_and_clear_invoice(context: any) {
 	}
 }
 
+/**
+ * delivery_management: "Save & Clear" on an Order places it without payment. The Sales
+ * Order is submitted (slot booked, Delivery Note follows) and the Sales Invoice is
+ * submitted Unpaid; the customer usually pays on delivery.
+ */
+async function save_delivery_order_unpaid(context: any) {
+	const delivery = useDeliveryStore();
+	if (delivery.saving) return null;
+	const fail = (title: string, detail?: string) => {
+		context.toastStore.show({ title, detail, color: "error" });
+		return null;
+	};
+	if (isOffline()) {
+		return fail(
+			__("Delivery orders need an internet connection"),
+			__("The delivery slot is booked on the server. Reconnect, or sell it as an Invoice."),
+		);
+	}
+	if (!context.customer) {
+		return fail(__("Choose the customer first"));
+	}
+	if (!(await context.validate())) return null;
+	if (!delivery.delivery?.valid) {
+		const missing = delivery.delivery?.missing || [];
+		return fail(
+			__("Finish the delivery details first"),
+			missing.length ? __("Still missing: {0}", [missing.join(", ")]) : undefined,
+		);
+	}
+
+	delivery.saving = true;
+	const codes = (context.items || []).map((item: any) => item.item_code);
+	try {
+		const draft = await context.update_invoice(get_invoice_doc(context));
+		if (!draft?.name) {
+			return fail(__("Error saving the current invoice"));
+		}
+		ensureInvoiceClientRequestId(draft);
+		const result: any = await dmCall(
+			"submit",
+			{
+				invoice: draft,
+				data: {},
+				order_type: "Order",
+				delivery: delivery.delivery,
+				unpaid: 1,
+			},
+			{ freeze: true, freeze_message: __("Saving order..."), timeoutMs: 120_000 },
+		);
+		context.toastStore.show({
+			title: __("Order {0} saved", [result?.sales_order || ""]),
+			detail: __("Invoice {0} is unpaid: collect the payment on delivery.", [result?.name || ""]),
+			color: "success",
+		});
+		frappe?.utils?.play_sound?.("submit");
+		context.uiStore?.setLastInvoice?.(result?.name);
+		delivery.clearDelivery();
+		delivery.stockChanged(codes, context.pos_profile?.name);
+		const { clearInvoice } = getItemAdditionApi();
+		clearInvoice(context);
+		context.eventBus?.emit?.("focus_item_search");
+		return result;
+	} catch (error: any) {
+		frappe?.utils?.play_sound?.("error");
+		// A slot may have just been taken: show the current availability.
+		delivery.requestRefresh();
+		return fail(__("The order was not saved"), error?.message || String(error));
+	} finally {
+		delivery.saving = false;
+	}
+}
+
 export async function new_order(context: any, data: any = {}) {
 	if (context.eventBus) context.eventBus.emit("set_customer_readonly", false);
 	context.expanded = [];
@@ -239,7 +325,7 @@ export async function new_order(context: any, data: any = {}) {
 		context.invoice_doc = "";
 		context.discount_amount = 0;
 		context.additional_discount_percentage = 0;
-		context.invoiceType = "Invoice";
+		context.invoiceType = defaultInvoiceType(context.pos_profile);
 		context.invoiceTypes = ["Invoice", "Order", "Quotation"];
 	} else {
 		if (data.is_return) {

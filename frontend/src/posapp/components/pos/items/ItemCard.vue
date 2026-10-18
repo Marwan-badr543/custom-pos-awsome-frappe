@@ -1,6 +1,6 @@
 <template>
 	<div
-		:class="['card-item-card', { 'item-highlighted': isItemHighlighted }]"
+		:class="['card-item-card', { 'item-highlighted': isItemHighlighted, 'dm-out-of-stock': dmOut(item) }]"
 		data-pos-keyboard-target="item-card"
 		:data-testid="`pos-item-card-${item.item_code}`"
 		:data-item-code="item.item_code"
@@ -58,7 +58,11 @@
 						</span>
 					</div>
 				</div>
-				<div class="card-item-stock">
+				<div v-if="dmOut(item)" class="card-item-stock dm-out-label">
+					<v-icon size="small" class="stock-icon"> mdi-package-variant-remove </v-icon>
+					<span>{{ __("Out of stock") }}</span>
+				</div>
+				<div v-else class="card-item-stock" :title="dmEnabled ? __('Available in {0}', [stockPlace]) : ''">
 					<v-icon size="small" class="stock-icon"> mdi-package-variant </v-icon>
 					<span
 						class="stock-amount"
@@ -80,6 +84,10 @@ import { computed } from "vue";
 import placeholderImage from "../placeholder-image.png";
 import ItemRateInfoMenu from "./ItemRateInfoMenu.vue";
 import { priceListToSelectedCurrency } from "../../../utils/erpnextCurrency";
+import { useDeliveryStock } from "../../../composables/pos/delivery/useDeliveryStock";
+
+// delivery_management: stock of this branch (Invoice) or of the main store (Order).
+const { enabled: dmEnabled, dmQty, dmOut, stockPlace } = useDeliveryStock();
 
 const props = defineProps({
 	item: { type: Object, required: true },
@@ -160,7 +168,7 @@ const showSecondaryPrice = computed(() => {
 });
 
 const formattedActualQty = computed(() => {
-	const numericQty = Number(props.item.actual_qty ?? 0);
+	const numericQty = Number(dmQty(props.item) ?? props.item.actual_qty ?? 0);
 	if (!Number.isFinite(numericQty)) {
 		return 0;
 	}
@@ -193,6 +201,15 @@ const onDragEnd = (event) => {
 </script>
 
 <style scoped>
+.card-item-card.dm-out-of-stock {
+	opacity: 0.5;
+	cursor: not-allowed;
+	filter: grayscale(0.6);
+}
+.dm-out-label {
+	color: rgb(var(--v-theme-error));
+	font-weight: 600;
+}
 .card-item-card {
 	background: var(--pos-surface-raised);
 	border-radius: var(--pos-radius-md);

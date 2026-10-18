@@ -183,10 +183,17 @@ export function get_invoice_doc(context: any) {
 		const isOrderInvoiceFlow =
 			context.invoiceType === "Order" &&
 			doc.doctype !== "Sales Order";
+		// A return follows the stock path of the invoice it returns: an invoice that did not
+		// move stock (e.g. a delivery order, where the Delivery Note moves it) cannot be
+		// returned with update_stock (ERPNext refuses it).
+		const returnFollowsOriginal =
+			context.isReturnInvoice &&
+			sourceDoc.return_against &&
+			(sourceDoc.update_stock === 0 || sourceDoc.update_stock === "0" || sourceDoc.update_stock === false);
 		doc.update_stock =
 			explicitFlowUpdateStock === 0 || explicitFlowUpdateStock === 1
 				? explicitFlowUpdateStock
-				: isOrderInvoiceFlow
+				: isOrderInvoiceFlow || returnFollowsOriginal
 					? 0
 					: defaultUpdateStock;
 	}

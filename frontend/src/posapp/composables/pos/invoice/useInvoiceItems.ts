@@ -38,6 +38,7 @@ import { useUIStore } from "../../../stores/uiStore";
 import { useStockUtils } from "../shared/useStockUtils";
 import { useItemAddition } from "../items/useItemAddition";
 import { parseBooleanSetting } from "../../../utils/stock";
+import { useDeliveryStock } from "../delivery/useDeliveryStock";
 import {
 	getCachedDeliveryCharges,
 	saveDeliveryChargesCache,
@@ -54,6 +55,7 @@ export function useInvoiceItems(invoiceType: Ref<string>) {
 	const uiStore = useUIStore();
 	const { calc_stock_qty } = useStockUtils();
 	const { removeItem, addItem } = useItemAddition();
+	const deliveryStock = useDeliveryStock();
 
 	const pos_profile = computed(() => uiStore.posProfile);
 	const stock_settings = computed(() => uiStore.stockSettings);
@@ -388,6 +390,29 @@ export function useInvoiceItems(invoiceType: Ref<string>) {
 				),
 				color: "error",
 			});
+		}
+
+		// delivery_management: never ask for more than the target store (branch / main store) has.
+		if (field_name === "qty" && !isReturnInvoice.value && !item?.posa_is_offer) {
+			const remaining = deliveryStock.dmRemaining(
+				item?.item_code,
+				invoiceStore.items,
+				item,
+			);
+			const factor = Number(item?.conversion_factor || 1) || 1;
+			if (remaining !== undefined && Number(item[field_name]) * factor > remaining) {
+				const allowed = Math.max(0, flt(remaining / factor, effectivePrecision));
+				item[field_name] = allowed;
+				parsedValue = allowed;
+				toastStore.show({
+					title: __("Not enough stock of {0}", [item.item_name || item.item_code]),
+					detail: __("Maximum {0} available in {1}. Quantity adjusted.", [
+						formatFloat(allowed, effectivePrecision),
+						deliveryStock.stockPlace.value,
+					]),
+					color: "error",
+				});
+			}
 		}
 
 		if (isReturnInvoice.value && parsedValue > 0) {

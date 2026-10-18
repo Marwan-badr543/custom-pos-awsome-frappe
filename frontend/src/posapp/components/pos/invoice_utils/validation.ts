@@ -1,4 +1,10 @@
 import { validateCartBatchSerialAssignments } from "../../../composables/pos/shared/batchSerialValidation";
+import {
+	isDeliveryManagementEnabled,
+	serialsPickedByServer,
+} from "../../../utils/deliveryManagement";
+import { useDeliveryRules } from "../../../composables/pos/delivery/useDeliveryRules";
+import { useDeliveryStore } from "../../../stores/deliveryStore";
 
 declare const __: (_text: string, _args?: any[]) => string;
 declare const frappe: any;
@@ -146,6 +152,15 @@ export async function validate(context: any) {
 		const assignmentIssues = validateCartBatchSerialAssignments(
 			context.items,
 			{ isReturnInvoice: Boolean(context.isReturnInvoice) },
+		).filter(
+			// delivery_management picks serials on submit: only batches still need a choice.
+			(issue) =>
+				!(
+					issue?.item?.has_serial_no &&
+					!issue?.item?.has_batch_no &&
+					!context.isReturnInvoice &&
+					serialsPickedByServer(context.invoice_doc, issue.item)
+				),
 		);
 		if (assignmentIssues.length) {
 			const issue = assignmentIssues[0];
@@ -164,6 +179,67 @@ export async function validate(context: any) {
 		}
 	}
 
+	if (!context.isReturnInvoice && !validateDeliveryStock(context)) {
+		return false;
+	}
+
+	if (!context.isReturnInvoice && !validateDeliveryRules(context)) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * delivery_management: in a delivery Order the delivery charge appears once with qty 1 (the server checks the same on submit).
+ */
+function validateDeliveryRules(context: any) {
+	if (!isDeliveryManagementEnabled()) return true;
+	const rules = useDeliveryRules();
+	if (!rules.active(context.invoiceType, context.pos_profile, context.invoiceDoc || context.invoice_doc)) return true;
+	const problem = rules.chargeProblem(context.items);
+	if (problem) {
+		context.toastStore.show({ title: problem, color: "error" });
+		return false;
+	}
+	return true;
+}
+
+/**
+ * delivery_management: the cart may not ask for more than can be sold for this type
+ * (Invoice = this branch, Order = the main store). Unknown qty = no limit; the server
+ * checks again on submit.
+ */
+function validateDeliveryStock(context: any) {
+	if (!isDeliveryManagementEnabled()) return true;
+	const store = useDeliveryStore();
+	const type = context.invoiceType === "Order" ? "Order" : "Invoice";
+	const needed = new Map<string, { qty: number; name: string }>();
+	for (const item of context.items || []) {
+		if (!item?.item_code) continue;
+		const qty =
+			Number(item.stock_qty) ||
+			Number(item.qty || 0) * Number(item.conversion_factor || 1);
+		const row = needed.get(item.item_code) || { qty: 0, name: item.item_name || item.item_code };
+		row.qty += qty;
+		needed.set(item.item_code, row);
+	}
+	for (const [code, row] of needed) {
+		const available = store.qtyFor(code, type);
+		if (available === undefined || available === null) continue;
+		if (row.qty > Number(available)) {
+			context.toastStore.show({
+				title: __("Not enough stock of {0}", [row.name]),
+				detail: __("{0} available in {1}, {2} in the cart.", [
+					available,
+					type === "Order" ? __("the main store") : __("this branch"),
+					row.qty,
+				]),
+				color: "error",
+			});
+			return false;
+		}
+	}
 	return true;
 }
 

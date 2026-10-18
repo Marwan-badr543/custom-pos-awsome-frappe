@@ -186,6 +186,9 @@ export async function load_invoice(
 			}
 		: null;
 
+	// Reloading a draft (e.g. on PAY) must keep the cashier's Invoice / Order choice:
+	// clear_invoice resets the type to the default for a new sale.
+	const previousType = context.invoiceType;
 	if (context.clear_invoice) {
 		context.clear_invoice({ preserveStickies, preserveExchange });
 	}
@@ -240,6 +243,8 @@ export async function load_invoice(
 		if (!context.invoiceTypes.includes("Order")) {
 			context.invoiceTypes = ["Invoice", "Order", "Quotation"];
 		}
+	} else if (previousType === "Invoice" || previousType === "Order") {
+		context.invoiceType = previousType;
 	}
 
 	context.invoice_doc = data;

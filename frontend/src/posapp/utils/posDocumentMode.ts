@@ -1,4 +1,5 @@
 import { parseBooleanSetting } from "./stock";
+import { dmOrdersEnabled } from "./deliveryManagement";
 
 export type PosDocumentMode = "Invoice" | "Order" | "Quotation" | "Return" | string;
 
@@ -13,6 +14,12 @@ export function resolvePosDocumentDoctype({
 }: ResolvePosDocumentDoctypeOptions) {
 	if (invoiceType === "Quotation") {
 		return "Quotation";
+	}
+
+	// delivery_management: an Order stays a Sales Invoice draft; the server creates the
+	// Sales Order on submit (see utils/deliveryManagement.ts).
+	if (invoiceType === "Order" && dmOrdersEnabled(posProfile)) {
+		return "Sales Invoice";
 	}
 
 	if (

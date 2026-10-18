@@ -32,7 +32,7 @@
 						{{ __("Expired") }}
 					</v-chip>
 					<div
-						v-if="item.has_batch_no || item.has_serial_no"
+						v-if="item.has_batch_no || (item.has_serial_no && !serialsByServer)"
 						class="posa-cart-item-row__tracking-stack"
 					>
 						<v-chip
@@ -52,7 +52,7 @@
 							<v-icon end size="x-small">mdi-pencil</v-icon>
 						</v-chip>
 						<v-chip
-							v-if="item.has_serial_no"
+							v-if="item.has_serial_no && !serialsByServer"
 							:color="serialSelectionComplete ? 'info' : 'error'"
 							size="x-small"
 							variant="tonal"
@@ -442,6 +442,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { getCartGridCellId, getCartGridRowId } from "../../../utils/cartFieldFocus";
 import { normalizeCartEditQuantity } from "../../../utils/cartQuantity";
 import { getItemLossRisk, resolveSaleFloorPolicy } from "../../../utils/lossPrevention";
+import { serialsPickedByServer } from "../../../utils/deliveryManagement";
 
 defineOptions({
 	name: "CartItemRow",
@@ -589,6 +590,8 @@ const selectedSerialCount = computed(() => {
 		.filter(Boolean).length;
 });
 
+// delivery_management picks serials on submit; the cashier only chooses them on returns.
+const serialsByServer = computed(() => serialsPickedByServer(undefined, props.item));
 const serialSelectionComplete = computed(() => selectedSerialCount.value === requiredSerialCount.value);
 
 const rowDomId = computed(() => (props.rowIndex >= 0 ? getCartGridRowId(props.rowIndex) : undefined));

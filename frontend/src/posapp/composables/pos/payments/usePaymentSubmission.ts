@@ -16,6 +16,11 @@ import {
 import stockCoordinator from "../../../utils/stockCoordinator";
 import { parseBooleanSetting } from "../../../utils/stock";
 import { resolvePosDocumentDoctype } from "../../../utils/posDocumentMode";
+import {
+	isDeliveryManagementEnabled,
+	isDmOrder,
+} from "../../../utils/deliveryManagement";
+import { useDeliveryStore } from "../../../stores/deliveryStore";
 import { toCompanyCurrency } from "../../../utils/erpnextCurrency";
 import { shouldApplyReturnRefundCap } from "../../../utils/paymentInitialization";
 import {
@@ -279,7 +284,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			} catch (error) {
 				if (
 					getSubmissionErrorCode(error) !== "TERMINAL_LOCKED" ||
-					type !== "Invoice" ||
+					!(type === "Invoice" || isDmOrder(type, profile, submissionDoc)) ||
 					!stores?.employeeStore?.requestTerminalUnlock
 				) {
 					throw error;
@@ -997,6 +1002,31 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			onScheduleBackgroundCheck,
 		} = callbacks;
 
+		// delivery_management: submitted through its own endpoint (serials picked and, for
+		// Orders, Sales Order + slot booked on the server). Never through the offline outbox:
+		// replaying it later through POS Awesome's submit would skip all of that.
+		const viaDeliveryManagement =
+			isDeliveryManagementEnabled() &&
+			!(unref(options.exchangeSession)?.stage === "sale" && unref(options.exchangeSession)?.returnDoc);
+		const deliveryOrder = isDmOrder(type, profile, doc);
+		const deliveryStore = viaDeliveryManagement ? useDeliveryStore() : null;
+		if (deliveryOrder) {
+			if (isOffline()) {
+				throw new Error(
+					__("Delivery orders need an internet connection. Reconnect, or sell it as an Invoice."),
+				);
+			}
+			const delivery = deliveryStore?.delivery;
+			if (!delivery?.valid) {
+				const missing = delivery?.missing || [];
+				throw new Error(
+					missing.length
+						? __("Finish the delivery details first. Still missing: {0}", [missing.join(", ")])
+						: __("Finish the delivery details first (address and schedule, under the items)."),
+				);
+			}
+		}
+
 		if (doc.is_return) {
 			ensureReturnPaymentsAreNegative();
 		}
@@ -1110,6 +1140,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			);
 		const hasPostSubmitPaymentWork =
 			!isExchangeSubmission &&
+			!viaDeliveryManagement && // always submitted synchronously
 			Boolean(profile?.posa_allow_submissions_in_background_job) &&
 			(formatFloat(unref(redeemedCustomerCredit) || 0, prec) > 0 ||
 				hasGiftCardRedemption ||
@@ -1117,6 +1148,13 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 				cChange > 0);
 
 		if (isOffline()) {
+			if (viaDeliveryManagement) {
+				// Queued sales are later submitted by POS Awesome itself, which would skip the
+				// server-side serial picking and stock check of delivery_management.
+				throw new Error(
+					__("No internet connection: the sale was not submitted. Reconnect and press Submit again."),
+				);
+			}
 			if (isExchangeSubmission) {
 				throw new Error(
 					__("Item exchanges require an online connection"),
@@ -1162,8 +1200,9 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 		try {
 			await validateStockBeforeOnlineSubmission(doc, profile, type);
 			const intent = { data, invoice: submissionDoc };
-			if (!isExchangeSubmission) persistInvoiceIntentJournal(intent);
-			const outboxPersistPromise = isExchangeSubmission
+			const skipOutbox = isExchangeSubmission || viaDeliveryManagement;
+			if (!skipOutbox) persistInvoiceIntentJournal(intent);
+			const outboxPersistPromise = skipOutbox
 				? Promise.resolve()
 				: enqueueInvoiceOutboxEntry(intent).catch((error) => {
 						console.warn(
@@ -1229,7 +1268,14 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 				docstatus === 1 ||
 				status === 1 ||
 				(docstatus === undefined && status === undefined);
-			if (wasSubmitted && !isExchangeSubmission) {
+			if (wasSubmitted && viaDeliveryManagement && deliveryStore) {
+				deliveryStore.clearDelivery();
+				deliveryStore.stockChanged(
+					(doc?.items || []).map((item: any) => item.item_code),
+					profile?.name,
+				);
+			}
+			if (wasSubmitted && !skipOutbox) {
 				void outboxPersistPromise.then(() =>
 					removeInvoiceOutboxEntry(
 						submissionDoc.posa_client_request_id,
@@ -1243,6 +1289,7 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			}
 			const waitForInvoiceProcessing =
 				!isExchangeSubmission &&
+				!viaDeliveryManagement &&
 				Boolean(profile?.posa_allow_submissions_in_background_job) &&
 				!wasSubmitted;
 			const submittedDoctype =
@@ -1392,8 +1439,12 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 					invoiceType: type,
 					posProfile: profile,
 				});
-				const submittedTitle =
-					submittedDocumentType === "Sales Order"
+				const submittedTitle = r.message?.sales_order
+					? __("Order {0} placed (Invoice {1})", [
+							r.message.sales_order,
+							responseInvoiceName,
+						])
+					: submittedDocumentType === "Sales Order"
 						? __("Sales Order {0} is Submitted", [
 								responseInvoiceName,
 							])
@@ -1590,9 +1641,12 @@ export function usePaymentSubmission(options: PaymentSubmissionOptions) {
 			stores?.toastStore?.show(
 				buildSubmissionFailureToast(exc, errorMsg),
 			);
+			// A slot may have just been taken: show the current availability.
+			if (deliveryOrder) deliveryStore?.requestRefresh();
 
 			if (
 				!isExchangeSubmission &&
+				!viaDeliveryManagement &&
 				profile?.posa_allow_submissions_in_background_job
 			) {
 				if (onFinishNavigation) onFinishNavigation(true);

@@ -1,4 +1,5 @@
 import { toCompanyCurrency } from "../../../../utils/erpnextCurrency";
+import { serialsPickedByServer } from "../../../../utils/deliveryManagement";
 
 declare const __: (_text: string, _args?: any[]) => string;
 declare const frappe: any;
@@ -125,7 +126,8 @@ export function useItemCreation() {
 		if (
 			(!context?.pos_profile?.posa_auto_set_batch &&
 				new_item.has_batch_no) ||
-			new_item.has_serial_no
+			(new_item.has_serial_no &&
+				!serialsPickedByServer(context?.invoice_doc, new_item))
 		) {
 			// Only store the row ID to keep expanded array consistent
 			if (Array.isArray(context.expanded)) {

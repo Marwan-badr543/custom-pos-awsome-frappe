@@ -51,35 +51,6 @@
 						</v-card>
 
 						<v-card
-							v-if="pos_profile.posa_use_delivery_charges"
-							flat
-							class="invoice-section-card pos-themed-card"
-						>
-							<div class="invoice-section-heading">
-								<h3 class="invoice-section-heading__title">{{ __("Delivery Charges") }}</h3>
-							</div>
-							<DeliveryCharges
-								ref="deliveryChargesComponent"
-								:pos_profile="pos_profile"
-								:delivery_charges="delivery_charges"
-								:selected_delivery_charge="selected_delivery_charge"
-								:delivery_charges_rate="delivery_charges_rate"
-								:deliveryChargesFilter="deliveryChargesFilter"
-								:formatCurrency="formatCurrency"
-								:currencySymbol="currencySymbol"
-								:readonly="readonly"
-								@update:selected_delivery_charge="
-									(val) => {
-										selected_delivery_charge = val;
-										update_delivery_charges(conversion_rate, currency_precision);
-									}
-								"
-							/>
-						</v-card>
-					</div>
-
-					<div class="invoice-meta-grid">
-						<v-card
 							v-if="pos_profile.posa_allow_change_posting_date"
 							flat
 							class="invoice-section-card pos-themed-card"
@@ -112,6 +83,9 @@
 								"
 							/>
 						</v-card>
+					</div>
+
+					<div class="invoice-meta-grid">
 
 						<v-card
 							v-if="pos_profile.posa_allow_multi_currency"
@@ -221,6 +195,13 @@
 							/>
 						</div>
 					</v-card>
+
+					<!-- delivery_management: address + delivery slot / AC day for Orders -->
+					<DeliveryPanel
+						v-if="showDeliveryPanel"
+						:customer="customer || ''"
+						:items="items"
+					/>
 				</div>
 			</div>
 		</v-card>
@@ -328,6 +309,9 @@ import { save_and_clear_invoice as saveAndClearInvoiceAction } from "./invoice_u
 import { fetchDraftInvoices } from "../../utils/draftInvoices";
 import { getQuickCashTenderSuggestions } from "../../utils/cashTender";
 import invoiceService from "../../services/invoiceService";
+import DeliveryPanel from "./delivery/DeliveryPanel.vue";
+import { useDeliveryStore } from "../../stores/deliveryStore";
+import { defaultInvoiceType, isDmOrder } from "../../utils/deliveryManagement";
 
 // Composables
 import { useOnlineStatus } from "../../composables/core/useOnlineStatus";
@@ -494,8 +478,12 @@ export default {
 		PaymentConfirmationDialog,
 		PriceListRateDialog,
 		ItemQuickEditDialog,
+		DeliveryPanel,
 	},
 	computed: {
+		showDeliveryPanel() {
+			return isDmOrder(this.invoiceType, this.pos_profile, this.invoice_doc) && !this.isReturnInvoice;
+		},
 		isCounterGridPresentation() {
 			return this.presentation === "counter-grid";
 		},
@@ -1044,7 +1032,7 @@ export default {
 			this.pos_opening_shift = data.pos_opening_shift;
 			this.stock_settings = data.stock_settings;
 
-			this.invoiceType = this.pos_profile.posa_default_sales_order ? "Order" : "Invoice";
+			this.invoiceType = defaultInvoiceType(this.pos_profile);
 
 			this.fetch_price_lists();
 			this.update_price_list();
@@ -1577,7 +1565,7 @@ export default {
 			calc_uom: this.calc_uom,
 			recalculate_return_discount: (payload) => this.applyReturnDiscountProration(payload),
 			reset_invoice_type_to_invoice: () => {
-				this.invoiceType = "Invoice";
+				this.invoiceType = defaultInvoiceType(this.pos_profile);
 				this.invoiceTypes = ["Invoice", "Order", "Quotation"];
 			},
 		};
@@ -1661,6 +1649,10 @@ export default {
 	},
 	watch: {
 		...invoiceWatchers,
+		showDeliveryPanel(show) {
+			// Not a delivery Order any more (Invoice, Return...): drop the chosen schedule.
+			if (!show) useDeliveryStore().clearDelivery();
+		},
 		confirm_payment_dialog(val) {
 			if (val) {
 				this.$nextTick(() => {
