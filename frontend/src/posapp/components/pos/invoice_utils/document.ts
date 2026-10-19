@@ -6,6 +6,7 @@ import {
 import { _getPlcConversionRate } from "./currency";
 import { resolvePosDocumentDoctype } from "../../../utils/posDocumentMode";
 import { toCompanyCurrency } from "../../../utils/erpnextCurrency";
+import { serialsPickedByServer } from "../../../utils/deliveryManagement";
 
 declare const flt: (_value: unknown, _precision?: number) => number;
 declare const frappe: any;
@@ -565,7 +566,11 @@ export function get_invoice_items(context: any) {
 			qty: flt(item.qty),
 			uom: item.uom,
 			conversion_factor: item.conversion_factor,
-			serial_no: item.serial_no,
+			// delivery_management: the serials the cashier chose (the server checks them).
+			serial_no: serialsPickedByServer(context.invoice_doc, item)
+				? (item.serial_no_selected || []).join("\n")
+				: item.serial_no,
+			dm_component_serials: item.dm_component_serials,
 			// Link to original invoice item when doing returns
 			// Needed for backend validation that the item exists in
 			// the referenced Sales or POS Invoice

@@ -276,6 +276,15 @@
 					</div>
 				</div>
 
+				<!-- delivery_management: optional serials, checked and completed on the server -->
+				<ChosenSerials
+					v-if="serialsPickedByServer(invoice_doc, item) && (item.has_serial_no || item.is_bundle)"
+					:item="item"
+					:pos-profile="pos_profile"
+					:invoice-type="invoiceType"
+					:invoice-doc="invoice_doc"
+				/>
+
 				<!-- Serial Number Section -->
 				<div
 					class="posa-form-section"
@@ -437,6 +446,7 @@
 import { computed } from "vue";
 import { getDisplayableBatchOptions } from "../../../composables/pos/shared/useBatchSerial";
 import { dmOrdersEnabled, serialsPickedByServer } from "../../../utils/deliveryManagement";
+import ChosenSerials from "../delivery/ChosenSerials.vue";
 import type { CartItem, POSProfile, InvoiceDoc } from "../../../types/models";
 
 interface Props {
