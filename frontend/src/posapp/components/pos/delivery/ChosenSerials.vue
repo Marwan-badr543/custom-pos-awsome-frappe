@@ -23,7 +23,10 @@
 					chips
 					closable-chips
 					hide-details
+					:delimiters="[',', ' ']"
+					v-model:search="typed[code]"
 					@update:model-value="(value) => choose(code, value)"
+					@blur="commitTyped(code)"
 				></v-combobox>
 			</div>
 		</div>
@@ -42,6 +45,7 @@ const props = defineProps<{ item: any; posProfile: any; invoiceType?: string; in
 const __ = (window as any).__ || ((s: string) => s);
 const options = ref<Record<string, string[]>>({});
 const loading = ref(false);
+const typed = ref<Record<string, string>>({});
 const codes = computed(() => Object.keys(options.value));
 // For a bundle the server returns its serialised components, not the bundle itself.
 const isBundle = computed(() => codes.value.length > 0 && !codes.value.includes(props.item.item_code));
@@ -61,6 +65,14 @@ const choose = (code: string, value: any) => {
 	} else {
 		props.item.serial_no_selected = clean(value);
 	}
+};
+
+// A serial typed (or scanned) without pressing Enter is kept when the box loses focus.
+const commitTyped = (code: string) => {
+	const text = (typed.value[code] || "").trim();
+	if (!text) return;
+	choose(code, [...selected(code), text]);
+	typed.value[code] = "";
 };
 
 onMounted(async () => {
