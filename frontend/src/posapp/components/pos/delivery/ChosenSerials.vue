@@ -1,5 +1,5 @@
 <template>
-	<div class="posa-form-section">
+	<div v-if="isInvoice" class="posa-form-section">
 		<div class="posa-section-header">
 			<v-icon size="small" class="section-icon">mdi-barcode-scan</v-icon>
 			<span class="posa-section-title">{{ __("Serial Numbers (optional)") }}</span>
@@ -34,10 +34,11 @@
 </template>
 
 <script setup lang="ts">
-// delivery_management: the cashier may choose the serials of a line (or of a bundle's
-// components); the server checks them and picks the rest. Kept apart from POS Awesome's
-// own serial list, which only knows the branch and ties the qty to the serials.
-import { computed, onMounted, ref } from "vue";
+// delivery_management: on an Invoice the cashier may choose the serials of a line (or of a
+// bundle's components); the server checks them and picks the rest. An Order reserves only
+// the quantity: its serials are scanned on the Delivery Note. Kept apart from POS Awesome's
+// own serial list, which ties the qty to the serials.
+import { computed, ref, watch } from "vue";
 import { dmCall, dmOrderType } from "../../../utils/deliveryManagement";
 
 const props = defineProps<{ item: any; posProfile: any; invoiceType?: string; invoiceDoc?: any }>();
@@ -46,6 +47,9 @@ const __ = (window as any).__ || ((s: string) => s);
 const options = ref<Record<string, string[]>>({});
 const loading = ref(false);
 const typed = ref<Record<string, string>>({});
+const isInvoice = computed(
+	() => dmOrderType(props.invoiceType || "", props.posProfile, props.invoiceDoc) === "Invoice",
+);
 const codes = computed(() => Object.keys(options.value));
 // For a bundle the server returns its serialised components, not the bundle itself.
 const isBundle = computed(() => codes.value.length > 0 && !codes.value.includes(props.item.item_code));
@@ -75,16 +79,20 @@ const commitTyped = (code: string) => {
 	typed.value[code] = "";
 };
 
-onMounted(async () => {
-	loading.value = true;
-	try {
-		options.value = await dmCall("get_free_serials", {
-			item_code: props.item.item_code,
-			pos_profile: props.posProfile?.name,
-			order_type: dmOrderType(props.invoiceType || "", props.posProfile, props.invoiceDoc),
-		});
-	} finally {
-		loading.value = false;
-	}
-});
+watch(
+	isInvoice,
+	async (invoice) => {
+		if (!invoice || codes.value.length) return;
+		loading.value = true;
+		try {
+			options.value = await dmCall("get_free_serials", {
+				item_code: props.item.item_code,
+				pos_profile: props.posProfile?.name,
+			});
+		} finally {
+			loading.value = false;
+		}
+	},
+	{ immediate: true },
+);
 </script>
