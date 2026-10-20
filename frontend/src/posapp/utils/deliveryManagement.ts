@@ -74,6 +74,23 @@ export function serialsPickedByServer(doc?: any, item?: any): boolean {
 	);
 }
 
+/** Invoice scan: why the serial cannot be sold from this branch, or null. Orders take
+ * any serial (theirs are scanned on the Delivery Note), so they are not checked. */
+export async function dmScannedSerialProblem(serialNo: string, posProfile: any): Promise<string | null> {
+	const store = useInvoiceStore();
+	if (
+		!isDeliveryManagementEnabled() ||
+		!serialsPickedByServer(store.invoiceDoc) ||
+		dmOrderType(store.invoiceType, posProfile, store.invoiceDoc) !== "Invoice"
+	)
+		return null;
+	const r = await dmCall<{ problem: string | null }>("check_scanned_serial", {
+		serial_no: serialNo,
+		pos_profile: posProfile?.name,
+	});
+	return r?.problem || null;
+}
+
 /** The POS type sent to the server: returns are always plain invoices. */
 export function dmOrderType(invoiceType: string, posProfile: any, doc?: any) {
 	return isDmOrder(invoiceType, posProfile, doc) ? "Order" : "Invoice";

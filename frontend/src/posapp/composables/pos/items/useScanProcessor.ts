@@ -14,6 +14,7 @@ import {
 	type ScanAssignment,
 } from "./scanProcessor/scanAssignment";
 import { toCompanyCurrency } from "../../../utils/erpnextCurrency";
+import { dmScannedSerialProblem } from "../../../utils/deliveryManagement";
 // @ts-ignore
 import placeholderImage from "../../../components/pos/placeholder-image.png";
 
@@ -566,6 +567,15 @@ export function useScanProcessor(context: ScanProcessorContext) {
 							scanAssignment.serialNo = String(
 								resolved.serial_no,
 							);
+							// delivery_management: say why a serial of another branch is refused.
+							const problem = await dmScannedSerialProblem(
+								scanAssignment.serialNo,
+								pos_profile.value,
+							);
+							if (problem) {
+								toastStore.show({ title: problem, color: "error" });
+								return;
+							}
 						}
 						if (resolved?.batch_no) {
 							scanAssignment.batchNo = String(resolved.batch_no);
